@@ -1,0 +1,17 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+open my $col, '|-', 'column -t'
+	or die "column: $!\n";
+
+while (<>) {
+	chomp;
+	my ($name, $v, $u)  = split /\s+/;
+	my ($scheme, $rest) = split '//', $u;
+	my ($host, $path)   = split '/',  $rest, 2;
+	$path =~ s/\Q$v\E/{{v}}/g;
+	$path =~ s/\Q$name\E/{{name}}/g;
+	$path =~ s/\.\{\{name}}\.([xg]z)$/.tar.$1/ if $name eq 'tar';
+	print $col "$name $v $scheme//$host/$path\n";
+}

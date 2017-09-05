@@ -1,0 +1,87 @@
+# vim:ft=bash
+
+needenv() {
+	env=$1
+	if [[ -z "$(set +u ; eval "echo \$$env")" ]]; then
+		echo >&2 "$env must be set!"
+		exit 1
+	fi
+}
+
+all_packages() {
+	needenv SPAR_BASE
+	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
+	awk '{print $1}' $SPAR_LADINGS
+}
+
+package_def() {
+	needenv SPAR_BASE
+	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
+	grep -E "^$1 " $SPAR_LADINGS | tail -n1
+}
+
+version_of() {
+	needenv SPAR_BASE
+	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
+
+	v=$(package_def $1 | awk '{print $2}')
+	if [[ -z "$v" ]]; then
+		echo >&2 "unrecognized package '$1'; bailing."
+		exit 1
+	fi
+	echo "$v"
+}
+
+url_of() {
+	needenv SPAR_BASE
+	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
+
+	v=$(version_of $1); test -z "$v" && exit 1;
+	vx=$(  echo "$v" | awk 'BEGIN {FS="."}; {print $1}')
+	vxy=$( echo "$v" | awk 'BEGIN {FS="."}; {print $1 "." $2}')
+	vxyz=$(echo "$v" | awk 'BEGIN {FS="."}; {print $1 "." $2 "." $3}')
+	package_def $1                  |\
+	  awk '{print $3}'              |\
+	  sed -e "s/{{v}}/${v}/g"       |\
+	  sed -e "s/{{x}}/${vx}/g"      |\
+	  sed -e "s/{{xy}}/${vxy}/g"    |\
+	  sed -e "s/{{xyz}}/${vxyz}/g"  |\
+	  sed -e "s/{{name}}/${1}/g"
+}
+
+download() {
+	needenv SPAR_BASE
+	SPAR_CACHE=${SPAR_CACHE:-$SPAR_BASE/cache}
+
+	url=$(url_of $1); test -z "$url" && exit 1;
+	file=${url##*/}
+	mkdir -pv $SPAR_CACHE
+	if [[ ! -f "$SPAR_CACHE/$file" ]]; then
+		curl -sLo "$SPAR_CACHE/$file" $url
+	fi
+}
+
+unpack() {
+	needenv SPAR_BASE
+	SPAR_CACHE=${SPAR_CACHE:-$SPAR_BASE/cache}
+
+	url=$(url_of $1); test -z "$url" && exit 1;
+	file=${url##*/}
+	mkdir -pv $SPAR_CACHE
+	if [[ ! -f "$SPAR_CACHE/$file" ]]; then
+		curl -sLo "$SPAR_CACHE/$file" $url
+	fi
+
+	case $file in
+	*.tar.xz)  tar -xJf "$SPAR_CACHE/$file" ;;
+	*.tar.gz)  tar -xzf "$SPAR_CACHE/$file" ;;
+	*.tar.bz2) tar -xjf "$SPAR_CACHE/$file" ;;
+	*)
+		echo >&2 "unrecognized file extexnsion on '$file'; bailing."
+		exit 1
+		;;
+	esac
+}
+
+SPAR_BASE="${SPAR_BASE:-/lfs}"
+export SPAR_BASE

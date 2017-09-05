@@ -1,0 +1,11 @@
+#!/bin/bash
+set -e
+
+source /lfs/spar.fn
+for x in $(all_packages); do
+	echo -n "$x... "
+	download $x
+	echo OK
+done
+echo
+echo "ALL GOOD"
