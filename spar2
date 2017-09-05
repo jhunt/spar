@@ -1,6 +1,18 @@
 #!/bin/bash
 exec > >(tee /sparbuild.$$.$(date +'%Y-%m-%d.%H%M').log) 3>&1
 
+cat <<EOF
+ ######  ########     ###    ########
+##    ## ##     ##   ## ##   ##     ##
+##       ##     ##  ##   ##  ##     ##
+ ######  ########  ##     ## ########
+      ## ##        ######### ##   ##
+##    ## ##        ##     ## ##    ##
+ ######  ##        ##     ## ##     ##
+(bootstrap edition)
+
+EOF
+
 if [[ ! -f /.build ]]; then
   echo "NOT RUNNING IN A CHROOT'd RIG BUILD"
   echo "BAILING OUT!"
@@ -8,11 +20,10 @@ if [[ ! -f /.build ]]; then
 fi
 . /.build
 
-set -ex
+set -x
 cd /source
 
-if false; then
-# linux
+echo; echo ">> unpacking linux $linux_version headers into /usr/include"
 pushd linux-$linux_version
   make mrproper
   make INSTALL_HDR_PATH=dest headers_install
@@ -20,25 +31,26 @@ pushd linux-$linux_version
   cp -rv dest/include/* /usr/include
 popd
 
-# man-pages
-pushd man-pages-4.12
+echo; echo ">> installing man pages"
+pushd man-pages-$man_pages_version
   make install
 popd
 
-# glibc
+echo; echo ">> building native toolchain"
 case $(uname -m) in
   i?86)
-    GCC_INCDIR=/usr/lib/gcc/$(uname -m)-pc-linux-gnu/7.2.0/include
+    GCC_INCDIR=/usr/lib/gcc/$(uname -m)-pc-linux-gnu/$gcc_version/include
     ln -sfv ld-linux.so.2 /lib/ld-lsb.so.3
     ;;
 
   x86_64)
-    GCC_INCDIR=/usr/lib/gcc/x86_64-pc-linux-gnu/7.2.0/include
+    GCC_INCDIR=/usr/lib/gcc/x86_64-pc-linux-gnu/$gcc_version/include
     ln -sfv ../lib/ld-linux-x86-64.so.2 /lib64
     ln -sfv ../lib/ld-linux-x86-64.so.2 /lib64/ld-lsb-x86-64.so.3
     ;;
 esac
 
+echo; echo ">> setting up /etc (for glibc tests)"
 # set up /etc/services and /etc/hosts, as required by the glibc test
 # test suite, # specifically posix/tst-getaddrinfo{4,5}
 # -- tst-getaddrinfo4 does port/host lookups for http/$(hostname),
@@ -53,6 +65,7 @@ http 80/tcp www
 http 80/udp
 EOF
 
+echo; echo ">> installing glibc (natively)"
 rm -f /usr/include/limits.h
 mkdir -pv /source/build/glibc
 pushd /source/build/glibc
@@ -71,12 +84,15 @@ pushd /source/build/glibc
   sed '/test-installation/s@$(PERL)@echo not running@' -i ../../glibc-$glibc_version/Makefile
   make install
 
+  echo; echo ">> (glibc) setting up nscd"
   cp -v ../../glibc-$glibc_version/nscd/nscd.conf /etc/nscd.conf
   mkdir -pv /var/cache/nscd
 
+  echo; echo ">> (glibc) setting up locales"
   mkdir -pv /usr/lib/locale
   /usr/bin/localedef -i en_US -f UTF-8 en_US.UTF-8
 
+  echo; echo ">> (glibc) setting up nsswitch"
   cat > /etc/nsswitch.conf << "EOF"
 passwd:    files
 group:     files
@@ -91,6 +107,7 @@ ethers:    files
 rpc:       files
 EOF
 
+  echo; echo ">> (glibc) setting up timezones"
   tar -xf ../../tzdata2017b.tar.gz
   ZONEINFO=/usr/share/zoneinfo
   mkdir -pv $ZONEINFO/{posix,right}
@@ -111,7 +128,7 @@ EOF
   # SKIP /etc/ld.co.conf* configuration
 popd
 
-# adjust the toolchain
+echo; echo ">> re-targeting to native toolchain"
 mv -v /tools/bin/{ld,ld-old}
 mv -v /tools/$(uname -m)-pc-linux-gnu/bin/{ld,ld-old}
 mv -v /tools/bin/{ld-new,ld}
@@ -123,7 +140,7 @@ gcc -dumpspecs | sed -e 's@/tools@@g'                   \
     -e '/\*cpp:/{n;s@$@ -isystem /usr/include@}' >      \
     $(dirname $(gcc --print-libgcc-file-name))/specs
 
-# check it, yo
+echo; echo ">> checking native toolchain for fitness"
 pushd /source/build
   echo 'int main() { return 0; }' > dummy.c
   cc dummy.c -v -Wl,--verbose &> dummy.log
@@ -139,7 +156,7 @@ popd
 
 # start installing host package
 
-# zlib
+echo; echo ">> installing zlib"
 mkdir -p build/zlib
 pushd build/zlib
   ../../zlib-$zlib_version/configure \
@@ -152,7 +169,7 @@ pushd build/zlib
   ln -sfv ../../lib/$(readlink /usr/lib/libz.so) /usr/lib/libz.so
 popd
 
-# file
+echo; echo ">> installing file"
 mkdir -pv build/file
 pushd build/file
   ../../file-$file_version/configure \
@@ -162,7 +179,7 @@ pushd build/file
   make install
 popd
 
-# readline
+echo; echo ">> installing readline"
 pushd readline-$readline_version
   sed -i '/MV.*old/d' Makefile.in
   sed -i '/{OLDSUFF}/c:' support/shlib-install
@@ -183,7 +200,7 @@ pushd build/readline
   # SKIP installing readline-7.0 documentation...
 popd
 
-# m4
+echo; echo ">> installing m4"
 mkdir -pv build/m4
 pushd build/m4
   ../../m4-$m4_version/configure \
@@ -193,7 +210,7 @@ pushd build/m4
   make install
 popd
 
-# bc
+echo; echo ">> installing bc"
 pushd bc-$bc_version
   cat > bc/fix-libmath_h << "EOF"
 #! /bin/bash
@@ -224,9 +241,7 @@ pushd build/bc
   make install
 popd
 
-fi ############################################################################
-
-# binutils
+echo; echo ">> installing binutils"
 mkdir -pv build/binutils
 pushd build/binutils
   ../../binutils-$binutils_version/configure \
@@ -242,7 +257,7 @@ pushd build/binutils
   make tooldir=/usr install
 popd
 
-# gmp
+echo; echo ">> installing gmp"
 mkdir -pv build/gmp
 pushd build/gmp
   ../../gmp-$gmp_version/configure \
@@ -260,7 +275,7 @@ pushd build/gmp
   make install-html
 popd
 
-# mpfr
+echo; echo ">> installing mpfr"
 mkdir -pv build/mpfr
 pushd build/mpfr
   ../../mpfr-$mpfr_version/configure --prefix=/usr \
@@ -276,7 +291,7 @@ pushd build/mpfr
   make install-html
 popd
 
-# mpc
+echo; echo ">> installing mpc"
 mkdir -pv build/mpx
 pushd build/mpx
   ../../mpx-$mpc_version/configure --prefix=/usr \
@@ -291,7 +306,7 @@ pushd build/mpx
   make install-html
 popd
 
-# gcc
+echo; echo ">> installing gcc"
 pushd gcc-$gcc_version
   case $(uname -m) in
     x86_64)
@@ -323,7 +338,7 @@ pushd build/gcc
           /usr/lib/bfd-plugins/
 popd
 
-# check it, yo
+echo; echo ">> checking hosted native toolchain for fitness"
 pushd /source/build
   echo 'int main() { return 0; }' > dummy.c
   cc dummy.c -v -Wl,--verbose &> dummy.log
