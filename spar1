@@ -1,8 +1,11 @@
 #!/bin/bash
-exec > >(tee $HOME/sparbuild.$$.$(date +'%Y-%m-%d.%H%M').log) 2>&1
+SPAR_BASE=/spar
+SPAR_LOGS=$SPAR_BASE/log
+mkdir -p $SPAR_LOGS
+
+exec > >(tee $SPAR_LOGS/sparbuild.$$.$(date +'%Y-%m-%d.%H%M').log) 2>&1
 set -e
 
-SPAR_BASE=/spar
 SPAR=$SPAR_BASE/root
 SPAR_CACHE=$SPAR_BASE/cache
 
@@ -19,9 +22,15 @@ cat <<EOF
 EOF
 source $SPAR_BASE/spar.fn
 
-rm -fr $SPAR
+echo; echo ">> setting up spar environment"
+for mounted in dev{/pts,} proc sys run; do
+	if grep -q " $SPAR/$mounted " /proc/self/mounts; then
+		sudo umount $SPAR/$mounted
+	fi
+done
+sudo rm -fr --one-file-system $SPAR
 mkdir -pv $SPAR/{source,tools}
-sudo ln -sfv $SPAR/tools /tools
+sudo ln -sfv $SPAR/tools/ /
 
 cat >$SPAR/.build <<EOF
 export SPAR_BASE=$SPAR_BASE
@@ -45,14 +54,18 @@ done
 source $SPAR/.build
 cd $SPAR/source
 
-echo ">> downloading packages"
+echo; echo ">> downloading packages"
 for x in $(all_packages); do
 	echo -n "$x... "
 	download $x
 	echo OK
 done
 
-echo ">> building binutils (stage 1)"
+echo; echo ">> preparing host system"
+type gawk | sudo apt-get install -yy gawk
+type m4   | sudo apt-get install -yy m4
+
+echo; echo ">> building binutils (stage 1)"
 unpack binutils
 mkdir -pv build/binutils.1
 pushd build/binutils.1
@@ -71,7 +84,7 @@ pushd build/binutils.1
 popd
 
 
-echo ">> building gcc (stage 1)"
+echo; echo ">> building gcc (stage 1)"
 unpack gcc
 pushd gcc-$(version_of gcc)
   for what in gmp mpc mpfr isl; do
@@ -127,7 +140,7 @@ pushd build/gcc.1
   make install
 popd
 
-echo ">> unpacking linux headers for glibc"
+echo; echo ">> unpacking linux headers for glibc"
 unpack linux
 pushd linux-$(version_of linux)
   make mrproper
@@ -135,7 +148,7 @@ pushd linux-$(version_of linux)
   cp -rv dest/include/* /tools/include
 popd
 
-echo ">> building glibc (stage 1)"
+echo; echo ">> building glibc (stage 1)"
 unpack glibc
 mkdir -pv build/glibc
 pushd build/glibc
@@ -154,7 +167,7 @@ popd
 # clue gcc into glibc-provided c runtime object files
 #ln -sv /tools/lib/crt*.o /tools/lib/gcc/$SPAR_TGT/$(version_of gcc)/
 
-echo ">> checking stage 1 toolchain for fitness"
+echo; echo ">> checking stage 1 toolchain for fitness"
 pushd build
   echo 'int main() { return 0; }' > dummy.c
   $SPAR_TGT-gcc dummy.c
@@ -163,7 +176,7 @@ pushd build
   rm -f dummy.c a.out
 popd
 
-echo ">> building libstdc++ (stage 1)"
+echo; echo ">> building libstdc++ (stage 1)"
 mkdir -pv build/libstdc++
 pushd build/libstdc++
   ../../gcc-$(version_of gcc)/libstdc++-v3/configure \
@@ -220,9 +233,9 @@ pushd build/gcc.2
   make -j2
   make install
 popd
-ln -sv gcc /tools/bin/cc
+ln -sfv gcc /tools/bin/cc
 
-echo ">> checking stage 2 toolchain for fitness"
+echo; echo ">> checking stage 2 toolchain for fitness"
 pushd build
   echo 'int main() { return 0; }' > dummy.c
   $SPAR_TGT-gcc dummy.c
@@ -234,7 +247,7 @@ popd
 export CC=$SPAR_TGT-gcc
 export CXX=$SPAR_TGT-g++
 
-echo ">> building tcl (bootstrap)"
+echo; echo ">> building tcl (bootstrap)"
 unpack tcl
 mkdir -pv build/tcl
 pushd build/tcl
@@ -245,12 +258,12 @@ pushd build/tcl
   make install
 
   # make the lib writable so we can strip it later
-  chmod -v u+w /tools/lib/libtcl$VXY.so
+  chmod -v u+w /tools/lib/libtcl*.so
   make install-private-headers
-  ln -sv tclsh$VXY /tools/bin/tclsh
+  ln -sfv tclsh$(versionxy_of tcl) /tools/bin/tclsh
 popd
 
-echo ">> building expect (bootstrap)"
+echo; echo ">> building expect (bootstrap)"
 unpack expect
 mkdir -pv build/expect
 pushd build/expect
@@ -263,7 +276,7 @@ pushd build/expect
   make SCRIPTS="" install
 popd
 
-echo ">> building dejagnu (bootstrap)"
+echo; echo ">> building dejagnu (bootstrap)"
 unpack dejagnu
 mkdir -pv build/dejagnu
 pushd build/dejagnu
@@ -274,7 +287,7 @@ pushd build/dejagnu
   #make check
 popd
 
-echo ">> building check (bootstrap)"
+echo; echo ">> building check (bootstrap)"
 unpack check
 mkdir -pv build/check
 pushd build/check
@@ -286,7 +299,7 @@ pushd build/check
   make install
 popd
 
-echo ">> building ncurses (bootstrap)"
+echo; echo ">> building ncurses (bootstrap)"
 unpack ncurses
 sed -i s/mawk// ncurses-$(version_of ncurses)/configure    # prefer gawk
 
@@ -303,7 +316,7 @@ pushd build/ncurses
   make install
 popd
 
-echo ">> building bash (bootstrap)"
+echo; echo ">> building bash (bootstrap)"
 unpack bash
 mkdir -pv build/bash
 pushd build/bash
@@ -316,7 +329,7 @@ pushd build/bash
 popd
 ln -sfv bash /tools/bin/sh
 
-echo ">> building flex (bootstrap)"
+echo; echo ">> building flex (bootstrap)"
 unpack flex
 mkdir -pv build/flex
 pushd build/flex
@@ -328,7 +341,8 @@ pushd build/flex
 popd
 ln -sfv flex /tools/bin/lex
 
-echo ">> building bison (bootstrap)"
+echo; echo ">> building bison (bootstrap)"
+unpack bison
 mkdir -pv build/bison
 pushd build/bison
   ../../bison-$(version_of bison)/configure \
@@ -338,7 +352,7 @@ pushd build/bison
   make install
 popd
 
-echo ">> building bzip2 (bootstrap)"
+echo; echo ">> building bzip2 (bootstrap)"
 unpack bzip2
 # no ./configure: no build dir possible
 pushd bzip2-$(version_of bzip2)
@@ -346,7 +360,7 @@ pushd bzip2-$(version_of bzip2)
   make PREFIX=/tools install
 popd
 
-echo ">> building coreutils (bootstrap)"
+echo; echo ">> building coreutils (bootstrap)"
 unpack coreutils
 mkdir -pv build/coreutils
 pushd build/coreutils
@@ -358,7 +372,7 @@ pushd build/coreutils
   make install
 popd
 
-echo ">> building diffutils (bootstrap)"
+echo; echo ">> building diffutils (bootstrap)"
 unpack diffutils
 mkdir -pv build/diffutils
 pushd build/diffutils
@@ -369,7 +383,7 @@ pushd build/diffutils
   make install
 popd
 
-echo ">> building file (bootstrap)"
+echo; echo ">> building file (bootstrap)"
 unpack file
 mkdir -pv build/file
 pushd build/file
@@ -380,7 +394,7 @@ pushd build/file
   make install
 popd
 
-echo ">> building findutils (bootstrap)"
+echo; echo ">> building findutils (bootstrap)"
 unpack findutils
 mkdir -pv build/findutils
 pushd build/findutils
@@ -391,7 +405,7 @@ pushd build/findutils
   make install
 popd
 
-echo ">> building gawk (bootstrap)"
+echo; echo ">> building gawk (bootstrap)"
 unpack gawk
 mkdir -pv build/gawk
 pushd build/gawk
@@ -402,7 +416,7 @@ pushd build/gawk
   make install
 popd
 
-echo ">> building gettext (bootstrap)"
+echo; echo ">> building gettext (bootstrap)"
 unpack gettext
 mkdir -pv build/gettext
 pushd build/gettext
@@ -418,7 +432,7 @@ pushd build/gettext
   cp -v src/{msgfmt,msgmerge,xgettext} /tools/bin
 popd
 
-echo ">> building grep (bootstrap)"
+echo; echo ">> building grep (bootstrap)"
 unpack grep
 mkdir -pv build/grep
 pushd build/grep
@@ -429,7 +443,7 @@ pushd build/grep
   make install
 popd
 
-echo ">> building gzip (bootstrap)"
+echo; echo ">> building gzip (bootstrap)"
 unpack gzip
 mkdir -pv build/gzip
 pushd build/gzip
@@ -440,7 +454,7 @@ pushd build/gzip
   make install
 popd
 
-echo ">> building m4 (bootstrap)"
+echo; echo ">> building m4 (bootstrap)"
 unpack m4
 mkdir -pv build/m4
 pushd build/m4
@@ -451,7 +465,7 @@ pushd build/m4
   make install
 popd
 
-echo ">> building make (bootstrap)"
+echo; echo ">> building make (bootstrap)"
 unpack make
 mkdir -pv build/make
 pushd build/make
@@ -463,7 +477,7 @@ pushd build/make
   make install
 popd
 
-echo ">> building patch (bootstrap)"
+echo; echo ">> building patch (bootstrap)"
 unpack patch
 mkdir -pv build/patch
 pushd build/patch
@@ -474,7 +488,7 @@ pushd build/patch
   make install
 popd
 
-echo ">> building perl (bootstrap)"
+echo; echo ">> building perl (bootstrap)"
 unpack perl
 pushd perl-$(version_of perl)
   sed -e '9751 a#ifndef PERL_IN_XSUB_RE' \
@@ -487,7 +501,7 @@ pushd perl-$(version_of perl)
   cp -Rv lib/* /tools/lib/perl5/$(version_of perl)
 popd
 
-echo ">> building sed (bootstrap)"
+echo; echo ">> building sed (bootstrap)"
 unpack sed
 mkdir -pv build/sed
 pushd build/sed
@@ -498,7 +512,7 @@ pushd build/sed
   make install
 popd
 
-echo ">> building tar (bootstrap)"
+echo; echo ">> building tar (bootstrap)"
 unpack tar
 mkdir -pv build/tar
 pushd build/tar
@@ -509,7 +523,7 @@ pushd build/tar
   make install
 popd
 
-echo ">> building texinfo (bootstrap)"
+echo; echo ">> building texinfo (bootstrap)"
 unpack texinfo
 mkdir -pv build/tar
 pushd build/tar
@@ -520,7 +534,7 @@ pushd build/tar
   make install
 popd
 
-echo ">> building util-linux (bootstrap)"
+echo; echo ">> building util-linux (bootstrap)"
 unpack util-linux
 mkdir -pv build/tar
 pushd build/tar
@@ -535,7 +549,7 @@ pushd build/tar
   make install
 popd
 
-echo ">> building xz-utils (bootstrap)"
+echo; echo ">> building xz-utils (bootstrap)"
 unpack xz
 mkdir -pv build/xz
 pushd build/xz
@@ -546,22 +560,23 @@ pushd build/xz
   make install
 popd
 
-echo ">> tidying up bootstrap environment"
-strip --strip-debug    /tools/lib/*
-strip --strip-unneeded /tools/{,s}bin/*
+echo; echo ">> tidying up bootstrap environment"
+strip --strip-debug    /tools/lib/*     || true
+strip --strip-unneeded /tools/{,s}bin/* || true
 rm -rf /tools/{,share}/{info,man,doc}
 rm -rf $SPAR/source
 mkdir $SPAR/source
+cd $SPAR/source
 
-echo ">> setting permissions and ownership"
+echo; echo ">> setting permissions and ownership"
 sudo chown -R root:root $SPAR/tools
 
-echo ">> creating device files"
+echo; echo ">> creating device files"
 mkdir -pv $SPAR/{dev,proc,sys,run}
 sudo mknod -m 600 $SPAR/dev/console c 5 1
 sudo mknod -m 666 $SPAR/dev/null    c 1 3
 
-echo ">> setting up base mount points"
+echo; echo ">> setting up base mount points"
 sudo mount -v --bind /dev $SPAR/dev
 sudo mount -vt devpts devpts $SPAR/dev/pts -o gid=5,mode=620
 sudo mount -vt proc proc $SPAR/proc
@@ -571,7 +586,7 @@ if [ -h $SPAR/dev/shm ]; then
   mkdir -pv $SPAR/$(readlink $SPAR/dev/shm)
 fi
 
-echo ">> setting up root directory structure"
+echo; echo ">> setting up root directory structure"
 mkdir -pv $SPAR/{bin,boot,etc/{opt,sysconfig},home,lib/firmware,mnt,opt}
 mkdir -pv $SPAR/{media/{floppy,cdrom},sbin,srv,var}
 install -dv -m 0750 $SPAR/root
@@ -582,25 +597,26 @@ mkdir -pv $SPAR/usr/{,local/}share/{misc,terminfo,zoneinfo}
 mkdir -pv $SPAR/usr/libexec
 mkdir -pv $SPAR/usr/{,local/}share/man/man{1..8}
 case $(uname -m) in
-   x86_64) mkdir -v $SPAR/lib64 ;;
+   x86_64) mkdir -pv $SPAR/lib64 ;;
 esac
 mkdir -pv $SPAR/var/{log,mail,spool}
-ln -sv $SPAR/run /var/run
-ln -sv $SPAR/run/lock /var/lock
+rm -f $SPAR/var/{run,lock}
+ln -sfv /run      $SPAR/var/run
+ln -sfv /run/lock $SPAR/var/lock
 mkdir -pv $SPAR/var/{opt,cache,lib/{color,misc,locate},local}
 
-echo ">> linking required tools into root directory structure"
-ln -sv /tools/bin/{bash,cat,dd,echo,ln,pwd,rm,stty} $SPAR/bin
-ln -sv /tools/bin/{install,perl} $SPAR/usr/bin
-ln -sv /tools/lib/libgcc_s.so{,.1} $SPAR/usr/lib
-ln -sv /tools/lib/libstdc++.{a,so{,.6}} $SPAR/usr/lib
+echo; echo ">> linking required tools into root directory structure"
+ln -sfv /tools/bin/{bash,cat,dd,echo,ln,pwd,rm,stty} $SPAR/bin
+ln -sfv bash                                         $SPAR/bin/sh
+ln -sfv /tools/bin/{install,perl}                    $SPAR/usr/bin
+ln -sfv /tools/lib/libgcc_s.so{,.1}                  $SPAR/usr/lib
+ln -sfv /tools/lib/libstdc++.{a,so{,.6}}             $SPAR/usr/lib
 sed 's/tools/usr/' $SPAR/tools/lib/libstdc++.la > $SPAR/usr/lib/libstdc++.la
-ln -sv bash $SPAR/bin/sh
 
-echo ">> setting up legacy /etc/mtab"
-ln -sv /proc/self/mounts $SPAR/etc/mtab
+echo; echo ">> setting up legacy /etc/mtab"
+ln -sfv /proc/self/mounts $SPAR/etc/mtab
 
-echo ">> configuring passwd + group databases"
+echo; echo ">> configuring passwd + group databases"
 cat > $SPAR/etc/passwd << "EOF"
 root:x:0:0:root:/root:/bin/bash
 bin:x:1:1:bin:/dev/null:/bin/false
@@ -634,15 +650,15 @@ nogroup:x:99:
 users:x:999:
 EOF
 
-echo ">> setting up system accounting files"
+echo; echo ">> setting up system accounting files"
 touch $SPAR/var/log/{btmp,lastlog,faillog,wtmp}
-chgrp -v 13   $SPAR/var/log/lastlog # gid 13 = utmp (see above)
-chmod -v 664  $SPAR/var/log/lastlog
-chmod -v 600  $SPAR/var/log/btmp
+sudo chgrp -v 13   $SPAR/var/log/lastlog # gid 13 = utmp (see above)
+sudo chmod -v 664  $SPAR/var/log/lastlog
+     chmod -v 600  $SPAR/var/log/btmp
 
-echo ">> preparing for stage 2"
+echo; echo ">> preparing for stage 2"
 for what in man-pages \
-            glibc \
+            glibc glibc-p1 \
             zlib \
             file \
             readline \
@@ -654,6 +670,7 @@ for what in man-pages \
             mpc \
             gcc
 do
+  echo ">> downloading '$what' for stage 2"
   unpack $what
 done
 

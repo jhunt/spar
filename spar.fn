@@ -32,6 +32,14 @@ version_of() {
 	echo "$v"
 }
 
+versionxy_of() {
+	needenv SPAR_BASE
+	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
+
+	v=$(version_of $1); test -z "$v" && exit 1;
+	echo "$v" | awk 'BEGIN {FS="."}; {print $1 "." $2}'
+}
+
 url_of() {
 	needenv SPAR_BASE
 	SPAR_LADINGS=${SPAR_LADINGS:-$SPAR_BASE/ladings}
@@ -73,13 +81,10 @@ unpack() {
 	fi
 
 	case $file in
-	*.tar.xz)  tar -xJf "$SPAR_CACHE/$file" ;;
-	*.tar.gz)  tar -xzf "$SPAR_CACHE/$file" ;;
-	*.tar.bz2) tar -xjf "$SPAR_CACHE/$file" ;;
-	*)
-		echo >&2 "unrecognized file extexnsion on '$file'; bailing."
-		exit 1
-		;;
+	*.tar.xz)  tar -xJf "$SPAR_CACHE/$file"   ;;
+	*.tar.gz)  tar -xzf "$SPAR_CACHE/$file"   ;;
+	*.tar.bz2) tar -xjf "$SPAR_CACHE/$file"   ;;
+	*)         cp       "$SPAR_CACHE/$file" . ;;
 	esac
 }
 
