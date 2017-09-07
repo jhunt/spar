@@ -88,5 +88,5 @@ unpack() {
 	esac
 }
 
-SPAR_BASE="${SPAR_BASE:-/lfs}"
+SPAR_BASE="${SPAR_BASE:-/spar}"
 export SPAR_BASE
