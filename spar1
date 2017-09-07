@@ -47,8 +47,11 @@ EOF
 for pkg in $(all_packages); do
 	v=$(version_of $pkg)
 	if [[ $v != '~' ]]; then
-		pkg=$(echo "$pkg" | sed -e 's/[^a-zA-Z0-9_]/_/g')
-		echo "export ${pkg}_version=$v" >>$SPAR/.build
+		f=$(file_of $pkg)
+		p=$(echo "$pkg" | sed -e 's/[^a-zA-Z0-9_]/_/g')
+		(echo "export ${p}_version=$v"
+		 echo "export ${p}_archive=$f"
+		 echo)>>$SPAR/.build
 	fi
 done
 source $SPAR/.build
@@ -567,6 +570,12 @@ rm -rf /tools/{,share}/{info,man,doc}
 rm -rf $SPAR/source
 mkdir $SPAR/source
 cd $SPAR/source
+echo; echo ">> caching packages"
+for x in $(all_packages); do
+	echo -n "$x... "
+	cacheit $x
+	echo OK
+done
 
 echo; echo ">> setting permissions and ownership"
 sudo chown -R root:root $SPAR/tools

@@ -1,5 +1,5 @@
 #!/bin/bash
-exec > >(tee /sparbuild.$$.$(date +'%Y-%m-%d.%H%M').log) 3>&1
+exec > >(tee /sparbuild.$$.$(date +'%Y-%m-%d.%H%M').log) 2>&1
 
 cat <<EOF
  ######  ########     ###    ########
@@ -20,7 +20,7 @@ if [[ ! -f /.build ]]; then
 fi
 . /.build
 
-set -x
+set -eu
 cd /source
 
 echo; echo ">> unpacking linux $linux_version headers into /usr/include"
@@ -350,6 +350,906 @@ pushd /source/build
   grep -q "/lib.*/libc.so.6 " dummy.log
   grep -q found dummy.log
   rm -f dummy.c dummy.log a.out
+popd
+
+echo; echo ">> installing bzip2"
+tar -xf $bzip2_archive
+pushd bzip2-$bzip2_version
+  patch -Np1 -i ../bzip2-1.0.6-install_docs-1.patch
+  sed -i 's@\(ln -s -f \)$(PREFIX)/bin/@\1@' Makefile
+  sed -i "s@(PREFIX)/man@(PREFIX)/share/man@g" Makefile
+  make -f Makefile-libbz2_so
+  make clean
+  make
+  make PREFIX=/usr install
+
+  cp -v bzip2-shared /bin/bzip2
+  cp -av libbz2.so* /lib
+  ln -sv ../../lib/libbz2.so.1.0 /usr/lib/libbz2.so
+  rm -v /usr/bin/{bunzip2,bzcat,bzip2}
+  ln -sv bzip2 /bin/bunzip2
+  ln -sv bzip2 /bin/bzcat
+popd
+
+echo; echo ">> installing pkg-config"
+tar -xf $pkg_config_archive
+mkdir -pv build/pkg-config
+pushd build/pkg-config
+  ../../pkg-config-$pkg_config_version/configure \
+    --prefix=/usr                                \
+    --with-internal-glib                         \
+    --disable-host-tool                          \
+    --docdir=/usr/share/doc/pkg-config-$pkg_config_version
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing ncurses"
+tar -xf $ncurses_archive
+pushd ncurses-$ncurses_version
+  sed -i '/LIBTOOL_INSTALL/d' c++/Makefile.in
+popd
+mkdir -pv build/ncurses
+pushd build/ncurses
+  ../../ncurses-$ncurses_version/configure \
+    --prefix=/usr                          \
+    --mandir=/usr/share/man                \
+    --with-shared                          \
+    --without-debug                        \
+    --without-normal                       \
+    --enable-pc-files                      \
+    --enable-widec
+  make -j2
+  make install
+  mv -v /usr/lib/libncursesw.so.6* /lib
+  ln -sfv ../../lib/$(readlink /usr/lib/libncursesw.so) /usr/lib/libncursesw.so
+  for lib in ncurses form panel menu ; do
+    rm -vf                    /usr/lib/lib${lib}.so
+    echo "INPUT(-l${lib}w)" > /usr/lib/lib${lib}.so
+    ln -sfv ${lib}w.pc        /usr/lib/pkgconfig/${lib}.pc
+  done
+  rm -vf                     /usr/lib/libcursesw.so
+  echo "INPUT(-lncursesw)" > /usr/lib/libcursesw.so
+  ln -sfv libncurses.so      /usr/lib/libcurses.so
+
+  # install docs
+  mkdir -v       /usr/share/doc/ncurses-$ncurses_version
+  cp -v -R doc/* /usr/share/doc/ncurses-$ncurses_version
+popd
+
+echo; echo ">> installing attr"
+tar -xf $attr_archive
+pushd attr-$attr_version
+  sed -i -e 's|/@pkg_name@|&-@pkg_version@|' include/builddefs.in
+  sed -i -e "/SUBDIRS/s|man[25]||g" man/Makefile
+  sed -i 's:{(:\\{(:' test/run
+popd
+mkdir -pv build/attr
+pushd build/attr
+  ../../attr-$attr_version/configure \
+    --prefix=/usr                    \
+    --bindir=/bin                    \
+    --disable-static
+  make -j2
+  make -j1 tests root-tests
+  make install install-dev install-lib
+  chmod -v 755 /usr/lib/libattr.so
+
+  mv -v /usr/lib/libattr.so.* /lib
+  ln -sfv ../../lib/$(readlink /usr/lib/libattr.so) /usr/lib/libattr.so
+popd
+
+echo; echo ">> installing acl"
+tar -xf $acl_archive
+pushd acl-$acl_version
+  sed -i -e 's|/@pkg_name@|&-@pkg_version@|' include/builddefs.in
+  sed -i "s:| sed.*::g" test/{sbits-restore,cp,misc}.test
+  sed -i 's/{(/\\{(/' test/run
+  sed -i -e "/TABS-1;/a if (x > (TABS-1)) x = (TABS-1);" \
+          libacl/__acl_to_any_text.c
+popd
+mkdir -pb build/acl
+pushd build/acl
+  ../../acl-$acl_version/configure \
+    --prefix=/usr                  \
+    --bindir=/bin                  \
+    --disable-static               \
+    --libexecdir=/usr/lib
+  make -j2
+  make install install-dev install-lib
+  chmod -v 755 /usr/lib/libacl.so
+
+  mv -v /usr/lib/libacl.so.* /lib
+  ln -sfv ../../lib/$(readlink /usr/lib/libacl.so) /usr/lib/libacl.so
+popd
+
+echo; echo ">> installing libcap"
+tar -xf $libcap_archive
+pushd libcap-$libcap_version
+  sed -i '/install.*STALIBNAME/d' libcap/Makefile
+  make -j2
+  make RAISE_SETFCAP=no lib=lib prefix=/usr install
+  chmod -v 755 /usr/lib/libcap.so
+
+  mv -v /usr/lib/libcap.so.* /lib
+  ln -sfv ../../lib/$(readlink /usr/lib/libcap.so) /usr/lib/libcap.so
+popd
+
+echo; echo ">> installind sed"
+tar -xf $sed_archive
+pushd sed-$sed_version
+  sed -i 's/usr/tools/'                 build-aux/help2man
+  sed -i 's/testsuite.panic-tests.sh//' Makefile.in
+popd
+mkdir -pv build/sed
+pushd build/sed
+  ../../sed-$sed_version/configure \
+    --prefix=/usr                  \
+    --bindir=/bin
+  make -j2
+  make install
+  make check
+
+  install -d -m755           /usr/share/doc/sed-4.4
+  install -m644 doc/sed.html /usr/share/doc/sed-4.4
+popd
+
+echo; echo ">> installing shadow"
+tar -xf $shadow_archive
+pushd shadow-$shadow_version
+  sed -i 's/groups$(EXEEXT) //' src/Makefile.in
+  find man -name Makefile.in -exec sed -i 's/groups\.1 / /'   {} \;
+  find man -name Makefile.in -exec sed -i 's/getspnam\.3 / /' {} \;
+  find man -name Makefile.in -exec sed -i 's/passwd\.5 / /'   {} \;
+  sed -i -e 's@#ENCRYPT_METHOD DES@ENCRYPT_METHOD SHA512@' \
+         -e 's@/var/spool/mail@/var/mail@' etc/login.defs
+  sed -i 's/1000/999/' etc/useradd
+popd
+mkdir -pv build/shadow
+pushd build/shadow
+  ../../shadow-$shadow_version/configure \
+    --sysconfdir=/etc                    \
+    --with-group-name-max-length=32
+  make -j2
+  make install
+  mv -v /usr/bin/passwd /bin
+popd
+pwconv
+grpconv
+# SKIP root password set
+
+echo; echo ">> installing psmisc"
+tar -xf $psmisc_archive
+mkdir -pv build/psmisc
+pushd build/psmisc
+  ../../psmisc-$psmisc_version/configure \
+    --prefix=/usr
+  make -j2
+  make install
+  mv -v /usr/bin/fuser   /bin
+  mv -v /usr/bin/killall /bin
+popd
+
+echo; echo ">> installing iana-etc"
+tar -xf $iana_etc_archive
+pushd iana-etc-$iana_etc_version
+  make -j2
+  make install
+popd
+
+echo; echo ">> installing bison"
+tar -xf $bison_archive
+mkdir -pv build/bison
+pushd build/bison
+  ../../bison-$bison_version/configure \
+    --prefix=/usr                      \
+    --docdir=/usr/share/doc/bison-$bison_version
+  make -j2
+  make install
+popd
+
+echo; echo ">> installing flex"
+tar -xf $flex_archive
+pushd flex-$flex_version
+  sed -i "/math.h/a #include <malloc.h>" src/flexdef.h
+popd
+mkdir -p build/flex
+pushd build/flex
+  HELP2MAN=/tools/bin/true \
+  ../../flex-$flex_version/configure \
+    --prefix=/usr                    \
+    --docdir=/usr/share/doc/flex-$flex_version
+  make -j2
+  make check
+  make install
+popd
+ln -sv flex /usr/bin/lex
+
+echo; echo ">> installing grep"
+tar -xf $grep_archive
+mkdir -pv build/grep
+pushd build/grep
+  ../../grep-$grep_version/configure \
+    --prefix=/usr                    \
+    --bindir=/bin
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing bash"
+tar -xf $bash_archive
+pushd bash-$bash_version
+  patch -Np1 -i ../bash-4.4-upstream_fixes-1.patch
+popd
+mkdir -pv build/bash
+pushd build/bash
+  ../../bash-$bash_version/configure           \
+    --prefix=/usr                              \
+    --docdir=/usr/share/doc/bash-$bash_version \
+    --without-bash-malloc                      \
+    --with-installed-readline
+  make -j2
+  chown -Rv nobody .
+  su nobody -s /bin/bash -c "PATH=$PATH make tests"
+  make install
+popd
+mv -vf /usr/bin/bash /bin
+
+echo; echo ">> installing libtool"
+tar -xf $libtool_archive
+mkdir -pv build/libtool
+pushd build/libtool
+  ../../libtool-$libtool_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing gdbm"
+tar -xf $gdbm_archive
+mkdir -pv build/gdbm
+pushd build/gdbm
+  ../../gdbm-$gdbm_version/configure \
+    --prefix=/usr                    \
+    --disable-static                 \
+    --enable-libgdbm-compat
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing gperf"
+tar -xf $gperf_archive
+mkdir -pv build/gperf
+pushd build/gperf
+  ../../gperf-$gperf_version/configure \
+    --prefix=/usr                      \
+    --docdir=/usr/share/doc/gperf-$gperf_version
+  make -j2
+  make -j1 check
+  make install
+popd
+
+echo; echo ">> installing expat"
+tar -xf $expat_archive
+pushd expat-$expat_version
+  sed -i 's|usr/bin/env |bin/|' run.sh.in
+popd
+mkdir -pv build/expat
+pushd build/expat
+  ../../expat-$expat_version/configure \
+    --prefix=/usr                      \
+    --disable-static
+  make -j2
+  make check
+  make install
+  install -v -dm755 /usr/share/doc/expat-2.2.3
+  install -v -m644 ../../expat-$expat_version/doc/*.{html,png,css} /usr/share/doc/expat-2.2.3
+popd
+
+echo; echo ">> installing inetutils"
+tar -xf $inetutils_archive
+mkdir -pv build/inetutils
+pushd build/inetutils
+  ../../inetutils-$inetutils_version/configure \
+    --prefix=/usr                              \
+    --localstatedir=/var                       \
+    --disable-logger                           \
+    --disable-whois                            \
+    --disable-rcp                              \
+    --disable-rexec                            \
+    --disable-rlogin                           \
+    --disable-rsh                              \
+    --disable-servers
+  make -j2
+  make check
+  make install
+
+  mv -v /usr/bin/{hostname,ping,ping6,traceroute} /bin
+  mv -v /usr/bin/ifconfig /sbin
+popd
+
+echo; echo ">> installing perl"
+rm -rf perl-$perl_version
+tar -xf $perl_archive
+pushd perl-$perl_version
+  export BUILD_ZLIB=1
+  export BUILD_BZIP2=0
+  sh Configure -des -Dprefix=/usr                 \
+                    -Dvendorprefix=/usr           \
+                    -Dman1dir=/usr/share/man/man1 \
+                    -Dman3dir=/usr/share/man/man3 \
+                    -Dpager="/usr/bin/less -isR"  \
+                    -Duseshrplib                  \
+                    -Dusethreads
+  make -j2
+  make -k check
+  make install
+  unset BUILD_ZLIB BUILD_BZIP2
+popd
+
+echo; echo ">> installing XML::Parser"
+tar -xf $XML__Parser_archive
+pushd XML-Parser-$XML__Parser_version
+  perl Makefile.PL
+  make -j2
+  make test
+  make install
+popd
+
+echo; echo ">> installing intltool"
+tar -xf $intltool_archive
+pushd intltool-$intltool_version
+  sed -i 's:\\\${:\\\$\\{:' intltool-update.in
+popd
+mkdir -pv build/intltool
+pushd build/intltool
+  ../../intltool-$intltool_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+  install -v -Dm644 ../../intltool-$intltool_version/doc/I18N-HOWTO /usr/share/doc/intltool-0.51.0/I18N-HOWTO
+popd
+
+echo; echo ">> installing autoconf"
+tar -xf $autoconf_archive
+pushd autoconf-$autoconf_version
+  sed -i 's:\\\${:\\\$\\{:' bin/autoscan.in
+
+  # remove failing libtool tets
+  rm -f tests/foreign.at
+  sed -i '/foreign\.at/d' tests/Makefile.in \
+                          tests/suite.at
+popd
+mkdir -pv build/autoconf
+pushd build/autoconf
+  ../../autoconf-$autoconf_version/configure \
+    --prefix=/usr
+  make -j2
+  make -j2 check
+  make install
+popd
+
+echo; echo ">> installing automake"
+tar -xf $automake_archive
+pushd automake-$automake_version
+  sed -i "s:./configure:LEXLIB=/usr/lib/libfl.a &:" t/lex-{clean,depend}-cxx.sh
+
+  # apply patch for newer versions of dejagnu
+  # (see https://lists.gnu.org/archive/html/automake-patches/2016-06/msg00000.html)
+  patch -Np1 <<'EOF'
+diff --git a/t/check12.sh b/t/check12.sh
+index 0f3928a..306c720 100644
+--- a/t/check12.sh
++++ b/t/check12.sh
+@@ -61,6 +61,7 @@ DEJATOOL = hammer spanner
+ AM_RUNTESTFLAGS = HAMMER=$(srcdir)/hammer SPANNER=$(srcdir)/spanner
+ EXTRA_DIST += hammer.test/hammer.exp
+ EXTRA_DIST += spanner.test/spanner.exp
++EXTRA_DIST += $(DEJATOOL)
+ END
+ 
+ cat > hammer << 'END'
+EOF
+popd
+mkdir -pv build/automake
+pushd build/automake
+  ../../automake-$automake_version/configure \
+    --prefix=/usr                            \
+    --docdir=/usr/share/doc/automake-$automake_version
+  make -j2
+  make -j4 check
+  make install
+popd
+
+echo; echo ">> installing xz"
+tar -xf $xz_archive
+mkdir -pv build/xz
+pushd build/xz
+  ../../xz-$xz_version/configure \
+    --prefix=/usr                \
+    --disable-static             \
+    --docdir=/usr/share/doc/xz-$xz_version
+  make -j2
+  make check
+  make install
+  mv -v   /usr/bin/{lzma,unlzma,lzcat,xz,unxz,xzcat} /bin
+  mv -v /usr/lib/liblzma.so.* /lib
+  ln -svf ../../lib/$(readlink /usr/lib/liblzma.so) /usr/lib/liblzma.so
+popd
+
+echo; echo ">> installing kmod"
+tar -xf $kmod_archive
+mkdir -pv build/kmod
+pushd build/kmod
+  ../../kmod-$kmod_version/configure \
+    --prefix=/usr                    \
+    --bindir=/bin                    \
+    --sysconfdir=/etc                \
+    --with-rootlibdir=/lib           \
+    --with-xz                        \
+    --with-zlib
+  make -j2
+  make install
+  for target in depmod insmod lsmod modinfo modprobe rmmod; do
+    ln -sfv ../bin/kmod /sbin/$target
+  done
+  ln -sfv kmod /bin/lsmod
+popd
+
+echo; echo ">> installing gettext"
+tar -xf $gettext_archive
+pushd gettext-$gettext_version
+  sed -i '/^TESTS =/d'            gettext-runtime/tests/Makefile.in
+  sed -i 's/test-lock..EXEEXT.//' gettext-tools/gnulib-tests/Makefile.in
+popd
+mkdir -pv build/gettext
+pushd build/gettext
+  ../../gettext-$gettext_version/configure \
+    --prefix=/usr                          \
+    --disable-static                       \
+    --docdir=/usr/share/doc/gettext-$gettext_version
+  make -j2
+  make check
+  make install
+  chmod -v 0755 /usr/lib/preloadable_libintl.so
+popd
+
+echo; echo ">> installing procps-ng"
+tar -xf $procps_ng_archive
+pushd procps-ng-$procps_ng_version
+  sed -i -r 's|(pmap_initname)\\\$|\1|' testsuite/pmap.test/pmap.exp
+  sed -i '/set tty/d' testsuite/pkill.test/pkill.exp
+  rm testsuite/pgrep.test/pgrep.exp
+popd
+mkdir -pv build/procps-ng
+pushd build/procps-ng
+  ../../procps-ng-$procps_ng_version/configure           \
+    --prefix=/usr                                        \
+    --exec-prefix=                                       \
+    --libdir=/usr/lib                                    \
+    --docdir=/usr/share/doc/procps-ng-$procps_ng_version \
+    --disable-static                                     \
+    --disable-kill
+  make -j2
+  make check
+  make install
+
+  mv -v /usr/lib/libprocps.so.* /lib
+  ln -sfv ../../lib/$(readlink /usr/lib/libprocps.so) /usr/lib/libprocps.so
+popd
+
+echo; echo ">> installing e2fsprogs"
+tar -xf $e2fsprogs_archive
+mkdir -pv build/e2fsprogs
+pushd build/e2fsprogs
+  #LIBS=-L/tools/lib                            \
+  LD_LIBRARY_PATH=/tools/lib                   \
+  LIBS="-L/tools/lib -luuid"                   \
+  CFLAGS=-I/tools/include                      \
+  PKG_CONFIG_PATH=/tools/lib/pkgconfig         \
+  ../../e2fsprogs-$e2fsprogs_version/configure \
+    --prefix=/usr                              \
+    --bindir=/bin                              \
+    --with-root-prefix=""                      \
+    --enable-elf-shlibs                        \
+    --disable-libblkid                         \
+    --disable-libuuid                          \
+    --disable-uuidd                            \
+    --disable-fsck
+  # specifically cannot use -j2
+  make
+
+  # SKIP tests for now, m_hugefile is failing and I cannot figure out why.
+  #ln -sfv /tools/lib/lib{blk,uu}id.so.1 lib
+  #make LD_LIBRARY_PATH=/tools/lib check
+
+  make install
+  make install-libs
+
+  chmod -v u+w /usr/lib/{libcom_err,libe2p,libext2fs,libss}.a
+  gunzip -v /usr/share/info/libext2fs.info.gz
+  install-info --dir-file=/usr/share/info/dir /usr/share/info/libext2fs.info
+
+  makeinfo -o      doc/com_err.info ../../e2fsprogs-$e2fsprogs_version/lib/et/com_err.texinfo
+  install -v -m644 doc/com_err.info /usr/share/info
+  install-info --dir-file=/usr/share/info/dir /usr/share/info/com_err.info
+popd
+
+echo; echo ">> installing coreutils"
+tar -xf $coreutils_archive
+pushd coreutils-$coreutils_version
+  # had to "|| true" his because the patch has been partially applied
+  # upstream (or so it appears).  Need to AUDIT this later
+  patch -Np1 -i ../coreutils-8.27-i18n-1.patch || true
+  sed -i '/test.lock/s/^/#/' gnulib-tests/gnulib.mk
+popd
+mkdir -pv build/coreutils
+pushd build/coreutils
+  FORCE_UNSAFE_CONFIGURE=1                     \
+  ../../coreutils-$coreutils_version/configure \
+    --prefix=/usr                              \
+    --enable-no-install-program=kill,uptime
+  FORCE_UNSAFE_CONFIGURE=1 make
+
+  make NON_ROOT_USERNAME=nobody check-root
+
+  echo "dummy:x:1000:nobody" >> /etc/group
+  chown -Rv nobody .
+  su nobody -s /bin/bash \
+            -c "PATH=$PATH make RUN_EXPENSIVE_TESTS=yes check"
+  sed -i '/dummy/d' /etc/group
+
+  make install
+  mv -fv /usr/bin/{cat,chgrp,chmod,chown,cp,date,dd,df,echo} /bin
+  mv -fv /usr/bin/{false,ln,ls,mkdir,mknod,mv,pwd,rm} /bin
+  mv -fv /usr/bin/{rmdir,stty,sync,true,uname} /bin
+  mv -fv /usr/bin/chroot /usr/sbin
+  mv -fv /usr/share/man/man1/chroot.1 /usr/share/man/man8/chroot.8
+  sed -i s/\"1\"/\"8\"/1 /usr/share/man/man8/chroot.8
+
+  mv -v /usr/bin/{head,sleep,nice,test,[} /bin
+popd
+
+echo; echo ">> installing diffutils"
+tar -xf $diffutils_archive
+mkdir -pv build/diffutils
+pushd build/diffutils
+  ../../diffutils-$diffutils_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing gawk"
+tar -xf $gawk_archive
+mkdir -pv build/gawk
+pushd build/gawk
+  ../../gawk-$gawk_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+
+  mkdir -pv                                                            /usr/share/doc/gawk-4.1.4
+  cp    -v ../../gawk-$gawk_version/doc/{awkforai.txt,*.{eps,pdf,jpg}} /usr/share/doc/gawk-4.1.4
+popd
+
+echo; echo ">> installing findutils"
+tar -xf $findutils_archive
+pushd findutils-$findutils_version
+  sed -i 's/test-lock..EXEEXT.//' tests/Makefile.in
+popd
+mkdir -pv build/findutils
+pushd build/findutils
+  ../../findutils-$findutils_version/configure \
+    --prefix=/usr                              \
+    --localstatedir=/var/lib/locate
+  make -j2
+  make check
+  make install
+
+  mv -v /usr/bin/find /bin
+  sed -i 's|find:=${BINDIR}|find:=/bin|' /usr/bin/updatedb
+popd
+
+echo; echo ">> installing groff"
+tar -xf $groff_archive
+mkdir -pv build/groff
+pushd build/groff
+  PAGE=letter                          \
+  ../../groff-$groff_version/configure \
+    --prefix=/usr
+  make -j1
+  make install
+popd
+
+echo; echo ">> installing grub"
+tar -xf $grub_archive
+mkdir -pv build/grub
+pushd build/grub
+  ../../grub-$grub_version/configure \
+    --prefix=/usr                    \
+    --sbindir=/sbin                  \
+    --sysconfdir=/etc                \
+    --disable-efiemu                 \
+    --disable-werror
+  make -j2
+  make install
+popd
+
+echo; echo ">> installing less"
+tar -xf $less_archive
+mkdir -pv build/less
+pushd build/less
+  ../../less-$less_version/configure \
+    --prefix=/usr                    \
+    --sysconfdir=/etc
+  make -j2
+  make install
+popd
+
+echo; echo ">> installing gzip"
+tar -xf $gzip_archive
+mkdir -pv build/gzip
+pushd build/gzip
+  ../../gzip-$gzip_version/configure \
+    --prefix=/usr
+  make -j2
+  # SKIP tests, since they require `more` to be installed, which comes from util-linux
+  #make check
+  make install
+  mv -v /usr/bin/gzip /bin
+popd
+
+echo; echo ">> installing iproute2"
+tar -xf $iproute2_archive
+pushd iproute2-$iproute2_version
+  sed -i /ARPD/d Makefile
+  sed -i 's/arpd.8//' man/man8/Makefile
+  rm -v doc/arpd.sgml
+
+  sed -i 's/m_ipt.o//' tc/Makefile
+
+  make -j2
+  make DOCDIR=/usr/share/doc/iproute2-$iproute2_version install
+popd
+
+echo; echo ">> installing kbd"
+tar -xf $kbd_archive
+pushd kbd-$kbd_version
+  patch -Np1 -i ../kbd-$kbd_version-backspace-1.patch
+
+  sed -i 's/\(RESIZECONS_PROGS=\)yes/\1no/g' configure
+  sed -i 's/resizecons.8 //' docs/man/man8/Makefile.in
+popd
+mkdir -pv build/kbd
+pushd build/kbd
+  PKG_CONFIG_PATH=/tools/lib/pkgconfig \
+  ../../kbd-$kbd_version/configure     \
+    --prefix=/usr                      \
+    --disable-vlock
+  make -j2
+  make check
+  make install
+
+  mkdir -v                                   /usr/share/doc/kbd-$kbd_version
+  cp -R -v ../../kbd-$kbd_version/docs/doc/* /usr/share/doc/kbd-$kbd_version
+popd
+
+echo; echo ">> installing libpipeline"
+tar -xf $libpipeline_archive
+mkdir -pv build/libpipeline
+pushd build/libpipeline
+  PKG_CONFIG_PATH=/tools/lib/pkgconfig
+  ../../libpipeline-$libpipeline_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing make"
+tar -xf $make_archive
+mkdir -pv build/make
+pushd build/make
+  ../../make-$make_version/configure \
+    --prefix=/usr
+  make -j2
+  make PERL5LIB=$PWD/tests/ check
+  make install
+popd
+
+echo; echo ">> installing patch"
+tar -xf $patch_archive
+mkdir -pv build/patch
+pushd build/patch
+  ../../patch-$patch_version/configure \
+    --prefix=/usr
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing sysklogd"
+tar -xf $sysklogd_archive
+pushd sysklogd-$sysklogd_version
+  sed -i '/Error loading kernel symbols/{n;n;d}' ksym_mod.c
+  sed -i 's/union wait/int/' syslogd.c
+  make -j2
+  make BINDIR=/sbin install
+popd
+
+echo; echo ">> installing sysvinit"
+tar -xf $sysvinit_archive
+pushd sysvinit-$sysvinit_version
+  patch -Np1 -i ../sysvinit-2.88dsf-consolidated-1.patch
+  make -C src
+  make -C src install
+popd
+
+echo; echo ">> installing eudev"
+tar -xf $eudev_archive
+pushd eudev-$eudev_version
+  sed -r -i 's|/usr(/bin/test)|\1|' test/udev-test.pl
+  sed -i '/keyboard_lookup_key/d' src/udev/udev-builtin-keyboard.c
+  cat > config.cache << "EOF"
+HAVE_BLKID=1
+BLKID_LIBS="-lblkid"
+BLKID_CFLAGS="-I/tools/include"
+EOF
+popd
+mkdir -pv build/eudev
+pushd build/eudev
+  ../../eudev-$eudev_version/configure \
+    --prefix=/usr                      \
+    --bindir=/sbin                     \
+    --sbindir=/sbin                    \
+    --libdir=/usr/lib                  \
+    --sysconfdir=/etc                  \
+    --libexecdir=/lib                  \
+    --with-rootprefix=                 \
+    --with-rootlibdir=/lib             \
+    --enable-manpages                  \
+    --disable-static                   \
+    --config-cache
+  LIBRARY_PATH=/tools/lib make -j2
+
+  # SKIP tests; they require the 'tree' utility, which we don't install
+  #mkdir -pv /lib/udev/rules.d
+  #mkdir -pv /etc/udev/rules.d
+  #make LD_LIBRARY_PATH=/tools/lib check
+
+  make LD_LIBRARY_PATH=/tools/lib install
+
+  tar -xvf ../../udev-lfs-20140408.tar.bz2
+  make -f udev-lfs-20140408/Makefile.lfs install
+
+  # FIXME run this every time we get new hardware?
+  LD_LIBRARY_PATH=/tools/lib udevadm hwdb --update
+popd
+
+echo; echo ">> installing util-linux"
+tar -xf $util_linux_archive
+mkdir -pv /var/lib/hwclock
+mkdir -pv build/util-linux
+pushd build/util-linux
+  ../../util-linux-$util_linux_version/configure           \
+    ADJTIME_PATH=/var/lib/hwclock/adjtime                  \
+    --prefix=/usr                                          \
+    --docdir=/usr/share/doc/util-linux-$util_linux_version \
+    --disable-chfn-chsh                                    \
+    --disable-login                                        \
+    --disable-nologin                                      \
+    --disable-su                                           \
+    --disable-setpriv                                      \
+    --disable-runuser                                      \
+    --disable-pylibmount                                   \
+    --disable-static                                       \
+    --without-python                                       \
+    --without-systemd                                      \
+    --without-systemdsystemunitdir
+  make -j2
+
+  chown -Rv nobody .
+  su nobody -s /bin/bash -c "PATH=$PATH make -k check"
+
+  make install
+popd
+
+echo; echo ">> installing man-db"
+tar -xf $man_db_archive
+mkdir -pv build/man-db
+pushd build/man-db
+  ../../man-db-$man_db_version/configure           \
+    --prefix=/usr                                  \
+    --docdir=/usr/share/doc/man-db-$man_db_version \
+    --sysconfdir=/etc                              \
+    --disable-setuid                               \
+    --enable-cache-owner=bin                       \
+    --with-browser=/usr/bin/lynx                   \
+    --with-vgrind=/usr/bin/vgrind                  \
+    --with-grap=/usr/bin/grap                      \
+    --with-systemdtmpfilesdir=
+  make -j2
+  make check
+  make install
+popd
+
+echo; echo ">> installing tar"
+tar -xf $tar_archive
+mkdir -pv build/tar
+pushd build/tar
+  FORCE_UNSAFE_CONFIGURE=1         \
+  ../../tar-$tar_version/configure \
+    --prefix=/usr                  \
+    --bindir=/bin
+  make -j2
+  make check
+  make install
+  make -C doc install-html docdir=/usr/share/doc/tar-$tar_version
+popd
+
+echo; echo ">> installing texinfo"
+tar -xf $texinfo_archive
+mkdir -pv build/texinfo
+pushd build/texinfo
+  ../../texinfo-$texinfo_version/configure \
+    --prefix=/usr                          \
+    --disable-static
+  make -j2
+  make check
+  make install
+
+  make TEXMF=/usr/share/texmf install-tex
+  pushd /usr/share/info
+    rm -v dir
+    for f in *
+      do install-info $f dir 2>/dev/null
+    done
+  popd
+popd
+
+echo; echo ">> installing vim"
+tar -xf $vim_archive
+pushd vim80
+  echo '#define SYS_VIMRC_FILE "/etc/vimrc"' >> src/feature.h
+  sed -i '/call/{s/split/xsplit/;s/303/492/}' src/testdir/test_recover.vim
+
+  # vim configure script does something with cd from $PWD
+  # and therefore cannot (currently) support vpath builds...
+  ./configure --prefix=/usr
+  make -j2
+  make -j1 test &> vim-test.log
+
+  make install
+  ln -sv vim /usr/bin/vi
+  for L in  /usr/share/man/{,*/}man1/vim.1; do
+    ln -sv vim.1 $(dirname $L)/vi.1
+  done
+  ln -sv doc /usr/share/doc/vim-8.0.586
+
+  cat > /etc/vimrc << "EOF"
+" Begin /etc/vimrc
+
+set nocompatible
+set backspace=2
+set mouse=r
+syntax on
+if (&term == "xterm") || (&term == "putty")
+  set background=dark
+endif
+
+
+" End /etc/vimrc
+EOF
+
+  touch ~/.vimrc
 popd
 
 echo

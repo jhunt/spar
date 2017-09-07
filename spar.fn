@@ -57,6 +57,12 @@ url_of() {
 	  sed -e "s/{{name}}/${1}/g"
 }
 
+file_of() {
+	url=$(url_of $1); test -z "$url" && exit 1;
+	file=${url##*/}
+	echo "$file"
+}
+
 download() {
 	needenv SPAR_BASE
 	SPAR_CACHE=${SPAR_CACHE:-$SPAR_BASE/cache}
@@ -67,6 +73,20 @@ download() {
 	if [[ ! -f "$SPAR_CACHE/$file" ]]; then
 		curl -sLo "$SPAR_CACHE/$file" $url
 	fi
+}
+
+cacheit() {
+	needenv SPAR_BASE
+	SPAR_CACHE=${SPAR_CACHE:-$SPAR_BASE/cache}
+
+	url=$(url_of $1); test -z "$url" && exit 1;
+	file=${url##*/}
+	mkdir -pv $SPAR_CACHE
+	if [[ ! -f "$SPAR_CACHE/$file" ]]; then
+		curl -sLo "$SPAR_CACHE/$file" $url
+	fi
+
+	cp "$SPAR_CACHE/$file" .
 }
 
 unpack() {
