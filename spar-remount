@@ -1,0 +1,19 @@
+#!/bin/bash
+
+if [[ -z "$1" ]]; then
+  echo >&2 "USAGE: $0 /path/to/spar/root"
+  exit 1
+fi
+
+if [[ ! -f "$1/.build" ]]; then
+  echo >&2 "$1: does not look like a valid spar root (no .build file)"
+  exit 1
+fi
+
+source "$1/.build"
+
+sudo mount -v --bind /dev $SPAR/dev
+sudo mount -vt devpts devpts $SPAR/dev/pts -o gid=5,mode=620
+sudo mount -vt proc proc $SPAR/proc
+sudo mount -vt sysfs sysfs $SPAR/sys
+sudo mount -vt tmpfs tmpfs $SPAR/run
